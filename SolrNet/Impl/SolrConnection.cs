@@ -51,6 +51,7 @@ namespace SolrNet.Impl {
         public SolrConnection(string serverURL) {
             ServerURL = serverURL;
             Timeout = -1;
+            GetToPostUrlLength = -1;
             Cache = new NullCache();
             HttpWebRequestFactory = new HttpWebRequestFactory();
         }
@@ -77,6 +78,11 @@ namespace SolrNet.Impl {
         /// HTTP connection timeout
         /// </summary>
         public int Timeout { get; set; }
+
+        /// <summary>
+        /// The maximum length of the Url before switching from a Get request to a Post request. The default value -1 does not perform automatic http method switching.
+        /// </summary>
+        public int GetToPostUrlLength { get; set; }
 
         public string Post(string relativeUrl, string s) {
             var bytes = Encoding.UTF8.GetBytes(s);
@@ -130,14 +136,20 @@ namespace SolrNet.Impl {
         public string Get(string relativeUrl, IEnumerable<KeyValuePair<string, string>> parameters) {
             var u = new UriBuilder(serverURL);
             u.Path += relativeUrl;
-            u.Query = GetQuery(parameters);
+            var queryString = GetQuery(parameters);
+            u.Query = queryString;
+
+            var uriString = u.Uri.ToString();
+            if (GetToPostUrlLength > -1 && uriString.Length > GetToPostUrlLength) {
+                return PostStream(relativeUrl, "application/x-www-form-urlencoded", new MemoryStream(Encoding.UTF8.GetBytes(queryString)), new List<KeyValuePair<string, string>>(0));
+            }
 
             var request = HttpWebRequestFactory.Create(u.Uri);
             request.Method = HttpWebRequestMethod.GET;
             request.KeepAlive = true;
             request.AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip;
 
-            var cached = Cache[u.Uri.ToString()];
+            var cached = Cache[uriString];
             if (cached != null) {
                 request.Headers.Add(HttpRequestHeader.IfNoneMatch, cached.ETag);
             }
@@ -148,7 +160,7 @@ namespace SolrNet.Impl {
             try {
                 var response = GetResponse(request);
                 if (response.ETag != null)
-                    Cache.Add(new SolrCacheEntity(u.Uri.ToString(), response.ETag, response.Data));
+                    Cache.Add(new SolrCacheEntity(uriString, response.ETag, response.Data));
                 return response.Data;
             } catch (WebException e) {
                 if (e.Response != null) {
@@ -159,11 +171,11 @@ namespace SolrNet.Impl {
                         }
                         using (var s = e.Response.GetResponseStream())
                         using (var sr = new StreamReader(s)) {
-                            throw new SolrConnectionException(sr.ReadToEnd(), e, u.Uri.ToString());
+                            throw new SolrConnectionException(sr.ReadToEnd(), e, uriString);
                         }
                     }
                 }
-                throw new SolrConnectionException(e, u.Uri.ToString());
+                throw new SolrConnectionException(e, uriString);
             }
         }
 

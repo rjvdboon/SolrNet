@@ -42,6 +42,11 @@ namespace Castle.Facilities.SolrNetIntegration {
         private readonly string solrURL;
 
         /// <summary>
+        /// The maximum length of the Url before switching from a Get request to a Post request. The value -1 does not perform automatic http method switching.
+        /// </summary>
+        public int? GetToPostUrlLength { get; set; }
+
+        /// <summary>
         /// Default mapper override
         /// </summary>
         public IReadOnlyMappingManager Mapper { get; set; }
@@ -73,12 +78,28 @@ namespace Castle.Facilities.SolrNetIntegration {
             return url;
         }
 
+        private int? GetGetToPostUrlLength() {
+            if (GetToPostUrlLength.HasValue)
+                return GetToPostUrlLength.Value;
+            if (FacilityConfig == null)
+                return -1;
+            var configNode = FacilityConfig.Children["getToPostUrlLength"];
+            if (configNode == null)
+                return -1;
+
+            int getToPostUrlLength;
+            GetToPostUrlLength = int.TryParse(configNode.Value, out getToPostUrlLength) ? getToPostUrlLength : -1;
+            
+            return GetToPostUrlLength;
+        }
+
         protected override void Init() {
             var mapper = Mapper ?? new MemoizingMappingManager(new AttributesMappingManager());
             Kernel.Register(Component.For<IReadOnlyMappingManager>().Instance(mapper));
             //Kernel.Register(Component.For<ISolrCache>().ImplementedBy<HttpRuntimeCache>());
             Kernel.Register(Component.For<ISolrConnection>().ImplementedBy<SolrConnection>()
-                                .Parameters(Parameter.ForKey("serverURL").Eq(GetSolrUrl())));
+                                .DependsOn(Dependency.OnValue("serverURL", GetSolrUrl()),
+                                           Dependency.OnValue("GetToPostUrlLength", GetGetToPostUrlLength())));
 
             Kernel.Register(Component.For(typeof (ISolrDocumentActivator<>)).ImplementedBy(typeof(SolrDocumentActivator<>)));
 
@@ -142,7 +163,8 @@ namespace Castle.Facilities.SolrNetIntegration {
             var coreConnectionId = core.Id + typeof (SolrConnection);
             Kernel.Register(Component.For<ISolrConnection>().ImplementedBy<SolrConnection>()
                                 .Named(coreConnectionId)
-                                .Parameters(Parameter.ForKey("serverURL").Eq(core.Url)));
+                                .DependsOn(Dependency.OnValue("serverURL", core.Url),
+                                           Dependency.OnValue("GetToPostUrlLength", GetGetToPostUrlLength())));
 
             var ISolrQueryExecuter = typeof (ISolrQueryExecuter<>).MakeGenericType(core.DocumentType);
             var SolrQueryExecuter = typeof (SolrQueryExecuter<>).MakeGenericType(core.DocumentType);
